@@ -7,6 +7,7 @@
 #include "al/graphics/al_Shapes.hpp"
 #include "al/math/al_Random.hpp"
 #include "Gamma/DFT.h"
+#include "Gamma/SoundFile.h"
 
 using namespace al;
 using namespace std;
@@ -24,6 +25,7 @@ struct MyApp : public App
   // Window type: HAMMING, HANN, WELCH, NYQUIST, or etc
   // Format of frequency samples: COMPLEX, MAG_PHASE, or MAG_FREQ
   gam::STFT stft = gam::STFT(FFT_SIZE, FFT_SIZE / 4, 0, gam::HANN, gam::MAG_FREQ);
+  gam::SoundFile soundFile;
   Mesh mSpectrogram;
   vector<float> spectrum;
   float i_waveformData[BLOCK_SIZE * CHANNEL_COUNT]{0}; // Waveform variables
@@ -33,6 +35,8 @@ struct MyApp : public App
 
   void onInit() override
   {
+    AudioDevice outDevice = AudioDevice::defaultOutput();
+    audioIO().deviceOut(outDevice);
     if (audioIO().channelsIn() == 0)
     {
       cout << "**** ERROR: Could not open audio input. Quitting."

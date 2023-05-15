@@ -20,7 +20,7 @@ using namespace std;
 // define the synth's voice parameters and the sound and graphic generation
 // processes in the onProcess() functions.
 
-class SineEnv : public SynthVoice
+class SawTooth : public SynthVoice
 {
 public:
     // Unit generators
@@ -109,7 +109,7 @@ public:
     // GUI manager for SineEnv voices
     // The name provided determines the name of the directory
     // where the presets and sequences are stored
-    SynthGUIManager<SineEnv> synthManager{ "SineEnv" };
+    SynthGUIManager<SawTooth> synthManager{ "SawTooth" };
 
     // This function is called right after the window is created
     // It provides a graphics context to initialize ParameterGUI
