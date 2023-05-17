@@ -7,6 +7,7 @@
 #include "Gamma/Spatial.h"
 #include "Gamma/Types.h"
 #include "Gamma/SamplePlayer.h"
+#include "Gamma/DFT.h"
 
 #include "al/app/al_App.hpp"
 #include "al/graphics/al_Shapes.hpp"
@@ -18,6 +19,7 @@
 
 using namespace al;
 using namespace std;
+#define FFT_SIZE 4048
 
 class Kick : public SynthVoice {
  public:
@@ -252,6 +254,7 @@ public:
             // }
             float s2;
             mPan(s1, s1, s2);
+            mEnvFollow(s1);
             io.out(0) += s1;
             io.out(1) += s2;
         }
@@ -307,14 +310,29 @@ public:
 };
 
 class Pad : public SynthVoice {
+  public:
   gam::Pan<> mPan;
-  gam::ADSR<> mAmpEnv;
   gam::Sine<> mOsc;
+  gam::Env<3> mAmpEnv;
+  gam::EnvFollow<> mEnvFollow;
 
-  void init(){
+  gam::STFT stft = gam::STFT(FFT_SIZE, FFT_SIZE/4, 0, gam::HANN, gam::MAG_FREQ);
+
+  Mesh mSpectrogram;
+  vector<float> spectrum;
+  Mesh mMesh;
+
+  void init() override {
     mAmpEnv.curve(0); // linear segments
     mAmpEnv.levels(0,1,1,0);
     mAmpEnv.sustainPoint(2); // Make point 2 sustain until a release is issued
+
+    // Declare the size of the spectrum
+    spectrum.resize(FFT_SIZE / 2 + 1);
+    mSpectrogram.primitive(Mesh::LINE_STRIP);
+    // mSpectrogram.primitive(Mesh::POINTS);
+
+    addDisc(mMesh, 1.0, 30);
 
     createInternalTriggerParameter("amplitude", 0.3, 0.0, 1.0);
     createInternalTriggerParameter("frequency", 60, 20, 5000);
@@ -339,8 +357,16 @@ class Pad : public SynthVoice {
       float s1 = mOsc() * mAmpEnv() * getInternalParameterValue("amplitude");
       float s2;
       mPan(s1, s1, s2);
+      mEnvFollow(s1);
       io.out(0) += s1;
       io.out(1) += s2;
+
+      if(stft(s1)){
+        // loop through all frequency bins and scale the complex sample
+        for(unsigned k = 0; k < stft.numBins(); ++k){
+          spectrum[k] = tanh(pow(stft.bin(k).real(), 1.3));
+        }
+      }
     }
     // We need to let the synth know that this voice is done
     // by calling the free(). This takes the voice out of the
@@ -350,6 +376,26 @@ class Pad : public SynthVoice {
 
   void onProcess(Graphics& g) override {
     // Figure out graphics for chords later
+
+    float frequency = getInternalParameterValue("frequency");
+    float amplitude = getInternalParameterValue("amplitude");
+
+    mSpectrogram.reset();
+
+    for(int i = 0; i < FFT_SIZE / 90; i++){
+      mSpectrogram.color(HSV(frequency/500 - spectrum[i] * 50));
+      mSpectrogram.vertex(i, spectrum[i], 0.0);
+    }
+
+    g.meshColor();
+    g.pushMatrix();
+    g.translate(-0.5f, 1, -10);
+    g.scale(50.0/FFT_SIZE, 250, 1.0);
+    // g.pointSize(1 + 5 * mEnvFollow.value() * 10);
+    g.lineWidth(1 + 5 * mEnvFollow.value() * 100);
+    g.draw(mSpectrogram);
+    g.popMatrix();
+
   }
 
   void onTriggerOn() override {
@@ -364,7 +410,7 @@ class Pad : public SynthVoice {
 
 class MyApp : public App {
 public:
-    SynthGUIManager<Lead> synthManager {"Lead"};
+    SynthGUIManager<Pad> synthManager {"Pad"};
 
     Mesh mSpectrogram;
     vector<float> spectrum;
@@ -380,6 +426,7 @@ public:
     // Pitch constants
     const float Bb4 = 466.16;
     const float C5 = 523.25;
+    const float Db5 = 554.37;
     const float D5 = 587.33;
     const float Eb5 = 622.25;
     const float F5 = 698.46;
@@ -417,9 +464,21 @@ public:
     }
 
     void playSequenceA(){
-        playRhythm(0, 20);
-        playMelody(0);
-        playMelody(measure * 4);
+        playRhythm(0, 16);
+
+        playIntroMelody(0, 0.5);
+        playIntroChordSequence(0, 0.5f);
+
+        playIntroMelody(measure * 4, 0.5);
+        playIntroChordSequence(measure * 4, 0.5f);
+
+        playVerseChords(measure * 8, 0.5f);
+        playVerseMelody(measure * 8, 0.5f);
+
+        playVerseChords(measure * 10, 0.5f);
+        playVerseMelody(measure * 10, 0.5f);
+
+        playLead(Eb5 * 0.5f, measure * 12, measure);
     }
 
     bool onKeyDown(Keyboard const& k) override {
@@ -457,7 +516,7 @@ public:
       // amp, freq, attack, release, pan
       synthManager.synthSequencer().addVoiceFromNow(voice, time, duration);
   }
-  void playNote(float freq, float time, float duration = 0.5, float amp = 0.2, float attack = 0.1, float decay = 0.1){
+  void playLead(float freq, float time, float duration = 0.5, float amp = 0.2, float attack = 0.1, float decay = 0.1){
     auto* voice = synthManager.synth().getVoice<Lead>();
 
     voice->setInternalParameterValue("frequency", freq);
@@ -469,20 +528,35 @@ public:
     synthManager.synthSequencer().addVoiceFromNow(voice, time, duration);
   }
 
-
-  void playChord(vector<float> freqs, float offset, float time, float duration, float amp = 0.2, float attack = 0.1, float decay = 0.1){
+  void playPad(float freq, float offset, float time, float duration = 0.5, float amp = 0.2, float attack = 0.1, float decay = 0.1){
     auto* voice = synthManager.synth().getVoice<Pad>();
-    
+
+    voice->setInternalParameterValue("frequency", freq * offset);
     voice->setInternalParameterValue("amplitude", amp);
     voice->setInternalParameterValue("attackTime", attack);
     voice->setInternalParameterValue("releaseTime", decay);
     voice->setInternalParameterValue("pan", 0.0f);
 
+    synthManager.synthSequencer().addVoiceFromNow(voice, time, duration);
+  }
+
+
+  void playPadChord(vector<float> freqs, float offset, float time, float duration, float amp = 0.2, float attack = 0.1, float decay = 0.1){
+    
     for(float freq : freqs){
-      voice->setInternalParameterValue("frequency", freq * offset);
-      synthManager.synthSequencer().addVoiceFromNow(voice, time, duration);
+      playPad(freq, offset, time, duration, amp, attack, decay);
     }
   }
+
+
+  void playLeadChord(vector<float> freqs, float offset, float time, float duration, float amp = 0.2, float attack = 0.1, float decay = 0.1){
+    float num_notes = (float)freqs.size() - 1.0f;
+    for(float freq : freqs){
+      playLead(freq * offset, time, duration, amp / num_notes, attack, decay);
+    }
+  }
+
+
 
   void playRhythm(float startTime, int measureCount){
     for(int i = 0; i < measureCount; i++){
@@ -501,34 +575,61 @@ public:
   }
 
     // Possibly add an offset to the frequencies?
-  void playMelody(float startTime){
+  void playIntroMelody(float startTime, float offset = 1.0f){
         float attack = 0.1f;
         float decay = 0.1f;
-        playNote(G5, startTime, beat * 3, attack, decay); 
-        playNote(C5 * 2, startTime + beat * 3, sixteenth, attack, decay);
-        playNote(Bb4 * 2,startTime +  beat * 3 + sixteenth, sixteenth, attack, decay);
-        playNote(F5 ,startTime +  beat * 3 + eighth, sixteenth, attack, decay);
-        playNote(G5, startTime + beat * 3 + eighth + sixteenth, sixteenth + beat * 3, attack, decay);
+        playLead(offset * G5, startTime, beat * 3, attack, decay); 
+        playLead(offset * C5 * 2, startTime + beat * 3, sixteenth, attack, decay);
+        playLead(offset * Bb4 * 2,startTime +  beat * 3 + sixteenth, sixteenth, attack, decay);
+        playLead(offset * F5 ,startTime +  beat * 3 + eighth, sixteenth, attack, decay);
+        playLead(offset * G5, startTime + beat * 3 + eighth + sixteenth, sixteenth + beat * 3, attack, decay);
 
-        playNote(Bb4 * 2, startTime + measure + beat * 3, sixteenth, attack, decay);
-        playNote(G5, startTime + measure + beat * 3 + sixteenth, sixteenth, attack, decay);
-        playNote(Eb5, startTime + measure + beat * 3 + eighth, sixteenth, attack, decay);
-        playNote(F5, startTime + measure + beat * 3 + eighth + sixteenth, sixteenth + beat * 3, attack, decay);
+        playLead(offset * Bb4 * 2, startTime + measure + beat * 3, sixteenth, attack, decay);
+        playLead(offset * G5, startTime + measure + beat * 3 + sixteenth, sixteenth, attack, decay);
+        playLead(offset * Eb5, startTime + measure + beat * 3 + eighth, sixteenth, attack, decay);
+        playLead(offset * F5, startTime + measure + beat * 3 + eighth + sixteenth, sixteenth + beat * 3, attack, decay);
 
-        playNote(Eb5, startTime + measure * 2 + beat * 3, sixteenth, attack, decay);
-        playNote(F5, startTime + measure * 2 + beat * 3 + sixteenth, sixteenth, attack, decay);
-        playNote(Bb4, startTime + measure * 2 + beat * 3 + eighth, sixteenth, attack, decay);  
-        playNote(C5, startTime + measure * 2 + beat * 3 + eighth + sixteenth, sixteenth + beat * 3, attack, decay);  
+        playLead(offset * Eb5, startTime + measure * 2 + beat * 3, sixteenth, attack, decay);
+        playLead(offset * F5, startTime + measure * 2 + beat * 3 + sixteenth, sixteenth, attack, decay);
+        playLead(offset * Bb4, startTime + measure * 2 + beat * 3 + eighth, sixteenth, attack, decay);  
+        playLead(offset * C5, startTime + measure * 2 + beat * 3 + eighth + sixteenth, sixteenth + beat * 3, attack, decay);  
   }
 
-  void playChordSequence(float startTime, float offset){
+  void playVerseMelody(float startTime, float offset = 1.0f){
+    vector<float> combo_1 = {Bb4, G5 /2, Eb5};
+    vector<float> combo_2 = {Bb4, G5 /2, D5};
+    vector<float> combo_3 = {Bb4, G5 /2, Db5};
+    vector<float> combo_4 = {Bb4, G5 /2, C5};
+
+    playLeadChord(combo_1, offset, startTime, beat * 0.75);
+    playLeadChord(combo_2, offset, startTime + beat * 0.75, beat * 0.75);
+    playLeadChord(combo_3, offset, startTime + beat * 1.5, beat * 0.75);
+    playLeadChord(combo_4, offset, startTime + beat * 2.25, beat * 1.5);
+    
+    playLead(Bb4 * offset, startTime + measure + beat, beat * 0.8);
+    playLead((F5 / 2) * offset, startTime + measure + beat * 1.8, beat * 0.7);
+    playLead((Ab5 / 2) * offset, startTime + measure + beat * 2.5, beat * 1.5);
+  }
+
+  void playIntroChordSequence(float startTime, float offset){
     vector<float> Cm7 = {C5, Eb5, G5, Bb4 * 2};
     vector<float> Fm7 = {F5, Ab5, C5, Eb5};
     vector<float> F7 = {F5, A5, C5, Eb5};
     float attack = 0.1f;
-    float decay = 0.3f;
+    float decay = 0.25f;
 
-    playChord(Cm7, offset, startTime, measure, attack, decay);
+    playPadChord(Cm7, offset, startTime, measure, attack, decay);
+    playPadChord(F7, offset, startTime + measure, measure, attack, decay);
+    playPadChord(Fm7, offset, startTime + measure * 2, measure, attack, decay);
+    playPadChord(Cm7, offset, startTime + measure * 3, measure, attack, decay);
+  }
+
+  void playVerseChords(float startTime, float offset){
+    vector<float> Ebmaj7 = {Eb5, G5, Bb4 * 2, D5};
+    vector<float> Bb7 = {Bb4, D5, F5, Ab5};
+
+    playPadChord(Ebmaj7, offset, startTime, measure, 0.1f, 0.25f);
+    playPadChord(Bb7, offset, startTime + measure, measure, 0.1f, 0.25f);
   }
 };
 
