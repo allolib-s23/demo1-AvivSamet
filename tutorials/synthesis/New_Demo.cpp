@@ -16,6 +16,7 @@
 #include "al/ui/al_ControlGUI.hpp"
 #include "al/ui/al_Parameter.hpp"
 #include "al/math/al_Random.hpp"
+#include "al/sound/al_SoundFile.hpp"
 
 using namespace al;
 using namespace std;
@@ -98,6 +99,49 @@ class Hihat : public SynthVoice {
   }
   void onTriggerOn() override { mBurst.reset(); }
   //void onTriggerOff() override {  }
+};
+
+/* ---------------------------------------------------------------- */
+
+class OpenHihat : public SynthVoice {
+ public:
+  SoundFilePlayerTS player;
+
+  vector<float> soundfile_buffer;
+
+  void init() override {
+    // Initialize burst - Main freq, filter freq, duration
+    const char name[] = "open_hihat.wav";
+        if(!player.open(name)){
+          std::cerr << "File not found: " << name << std::endl;
+          exit(1);
+        }
+
+  }
+
+  // The audio processing function
+  void onProcess(AudioIOData& io) override {
+    int frames = (int)io.framesPerBuffer();
+    int channels = player.soundFile.channels;
+    int bufferLength = frames * channels;
+    if ((int)soundfile_buffer.size() < bufferLength) {
+      soundfile_buffer.resize(bufferLength);
+    }
+    player.getFrames(frames, soundfile_buffer.data(), (int)soundfile_buffer.size());
+    int second = (channels < 2) ? 0 : 1;
+    while (io()) {
+      int frame = (int)io.frame();
+      int idx = frame * channels;
+      io.out(0) = soundfile_buffer[idx];
+      io.out(1) = soundfile_buffer[idx + second];
+    }
+    
+  }
+  void onTriggerOn() override { player.setPlay(); }
+  void onTriggerOff() override { 
+    player.setPause();
+    player.setRewind(); 
+    }
 };
 
 /* ---------------------------------------------------------------- */
@@ -332,7 +376,7 @@ class Pad : public SynthVoice {
     mSpectrogram.primitive(Mesh::LINE_STRIP);
     // mSpectrogram.primitive(Mesh::POINTS);
 
-    addDisc(mMesh, 1.0, 30);
+    // addDisc(mMesh, 1.0, 30);
 
     createInternalTriggerParameter("amplitude", 0.3, 0.0, 1.0);
     createInternalTriggerParameter("frequency", 60, 20, 5000);
@@ -389,10 +433,10 @@ class Pad : public SynthVoice {
 
     g.meshColor();
     g.pushMatrix();
-    g.translate(-0.5f, 1, -10);
-    g.scale(50.0/FFT_SIZE, 250, 1.0);
+    g.translate(-1.5f, 1, -10);
+    g.scale(350.0/FFT_SIZE, 250, 1.0);
     // g.pointSize(1 + 5 * mEnvFollow.value() * 10);
-    g.lineWidth(1 + 5 * mEnvFollow.value() * 100);
+    g.lineWidth(1 + mEnvFollow.value() * 50);
     g.draw(mSpectrogram);
     g.popMatrix();
 
@@ -411,6 +455,9 @@ class Pad : public SynthVoice {
 class MyApp : public App {
 public:
     SynthGUIManager<Pad> synthManager {"Pad"};
+    SoundFilePlayerTS player;
+
+    vector<float> soundfile_buffer;
 
     Mesh mSpectrogram;
     vector<float> spectrum;
@@ -436,6 +483,7 @@ public:
 
     void onInit() override {
         // Set sampling rate for Gamma objects from app's audio
+        
         gam::sampleRate(audioIO().framesPerSecond());
     }
 
@@ -486,6 +534,10 @@ public:
             case 'a':
                 playSequenceA();
                 break;
+            case 's':
+                player.setRewind();
+                player.setPlay();
+                break;
             default:
                 break;
         }
@@ -506,6 +558,13 @@ public:
   void playHihat(float time, float duration = 0.3)
   {
       auto *voice = synthManager.synth().getVoice<Hihat>();
+      // amp, freq, attack, release, pan
+      synthManager.synthSequencer().addVoiceFromNow(voice, time, duration);
+  }
+
+  void playOpenHihat(float time, float duration)
+  {
+      auto *voice = synthManager.synth().getVoice<OpenHihat>();
       // amp, freq, attack, release, pan
       synthManager.synthSequencer().addVoiceFromNow(voice, time, duration);
   }
@@ -564,10 +623,10 @@ public:
       playKick(600, startTime + i * measure + beat * 1.75f, sixteenth);
       playKick(600, startTime + i * measure + beat * 2.0f, beat);
       
-      playHihat(startTime + i * measure + beat * 0.5f, eighth);
-      playHihat(startTime + i * measure + beat * 1.5f, eighth);
-      playHihat(startTime + i * measure + beat * 2.5f, eighth);
-      playHihat(startTime + i * measure + beat * 3.5f, eighth);
+      playOpenHihat(startTime + i * measure + beat * 0.5f, eighth);
+      playOpenHihat(startTime + i * measure + beat * 1.5f, eighth);
+      playOpenHihat(startTime + i * measure + beat * 2.5f, eighth);
+      playOpenHihat(startTime + i * measure + beat * 3.5f, eighth);
 
       playSnare(startTime + i * measure + beat, beat);
       playSnare(startTime + i * measure + beat * 3, beat);
