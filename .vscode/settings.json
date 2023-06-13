@@ -5,7 +5,8 @@
         "forward_list": "cpp",
         "list": "cpp",
         "valarray": "cpp",
-        "xstring": "cpp"
+        "xstring": "cpp",
+        "cmath": "cpp"
     },
     "cmake.configureOnOpen": false
 }
